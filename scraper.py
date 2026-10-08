@@ -63,16 +63,15 @@ def get(url):
     return response.text
 
 
-# --------------------------------------------------
+# =========================================================
 # NEW RELEASES
-# --------------------------------------------------
+# =========================================================
 
 def parse_new_releases(html, language):
 
     soup = BeautifulSoup(html, "html.parser")
 
     items = []
-
     inside = False
 
     for element in soup.find_all(["h2", "h3"]):
@@ -95,7 +94,7 @@ def parse_new_releases(html, language):
         if not inside:
             continue
 
-        # Stop at next section
+        # Stop when release section ends
         stop_words = [
             "by platform",
             "more languages",
@@ -205,6 +204,7 @@ def parse_new_releases(html, language):
             "url": title_url,
         }
 
+        # Remove duplicates
         duplicate = any(
             old["title"].lower()
             == title.lower()
@@ -262,14 +262,16 @@ def get_new_releases():
     return result
 
 
-# --------------------------------------------------
-# TRENDING
-# --------------------------------------------------
+# =========================================================
+# TRENDING DEBUG
+# =========================================================
 
 def get_trending():
 
     print()
-    print("Fetching Trending...")
+    print("=" * 60)
+    print("FETCHING TRENDING DEBUG")
+    print("=" * 60)
 
     html = get(BASE_URL)
 
@@ -278,416 +280,102 @@ def get_trending():
         "html.parser"
     )
 
-    trending = []
-
-    trending_heading = None
-
-    # Find "Trending now"
-    for heading in soup.find_all(
-        ["h2", "h3"]
-    ):
-
-        text = clean(
-            heading.get_text(
-                " ",
-                strip=True
-            )
-        ).lower()
-
-        if text == "trending now":
-
-            trending_heading = heading
-            break
-
-    if not trending_heading:
-
-        print("Trending section not found")
-
-        return []
-
-    # Find links after Trending heading
-    for link in trending_heading.find_all_next(
-        "a",
-        href=True
-    ):
-
-        href = link["href"]
-
-        # Only actual title pages
-        if "/title/" not in href:
-            continue
-
-        raw_text = clean(
-            link.get_text(
-                " ",
-                strip=True
-            )
+    # Find every text node containing "Trending now"
+    matches = soup.find_all(
+        string=re.compile(
+            r"trending now",
+            re.I
         )
-
-        if not raw_text:
-            continue
-
-        # Remove ranking number
-        text = re.sub(
-            r"^\d+",
-            "",
-            raw_text
-        ).strip()
-
-        # Remove status prefixes
-        text = re.sub(
-            r"^(All week|Trending|Rising fast|On the rise)\s+",
-            "",
-            text,
-            flags=re.I
-        )
-
-        # Remove Day X suffix
-        text = re.sub(
-            r"\s+Day\s+\d+$",
-            "",
-            text,
-            flags=re.I
-        ).strip()
-
-        if not text:
-            continue
-
-        full_url = urljoin(
-            BASE_URL,
-            href
-        )
-
-        # Prevent duplicates
-        if any(
-            item["url"] == full_url
-            for item in trending
-        ):
-            continue
-
-        trending.append({
-            "title": text,
-            "url": full_url,
-            "type": None,
-            "language_code": None,
-            "language": None,
-        })
-
-        # We only need top 10
-        if len(trending) >= 10:
-            break
-
-    print(
-        f"Found {len(trending)} trending titles"
     )
 
-    return trending
+    print()
+    print(
+        f"Found {len(matches)} "
+        f"'Trending now' text matches"
+    )
 
-
-# --------------------------------------------------
-# TRENDING TITLE DETAILS
-# --------------------------------------------------
-
-def get_title_details(item):
-
-    try:
-
-        html = get(
-            item["url"]
-        )
-
-        soup = BeautifulSoup(
-            html,
-            "html.parser"
-        )
-
-        # Determine Movie / Series
-        page_text = clean(
-            soup.get_text(
-                " ",
-                strip=True
-            )
-        )
-
-        # First metadata line near title
-        item_type = None
-
-        if re.search(
-            r"\bSeries\b",
-            page_text[:5000],
-            re.I
-        ):
-            item_type = "series"
-
-        elif re.search(
-            r"\bMovie\b",
-            page_text[:5000],
-            re.I
-        ):
-            item_type = "movie"
-
-        # Language
-        language_code = None
-
-        language_match = re.search(
-            r"\bLanguage\s+([A-Z]{2})\b",
-            page_text,
-            re.I
-        )
-
-        if language_match:
-
-            language_code = (
-                language_match
-                .group(1)
-                .upper()
-            )
-
-        # Map language code
-        language_name = None
-
-        for slug, info in LANGUAGES.items():
-
-            if (
-                language_code
-                == info["code"]
-            ):
-                language_name = (
-                    info["name"]
-                )
-                break
-
-        item["type"] = item_type
-        item["language_code"] = language_code
-        item["language"] = language_name
-
-        return item
-
-    except Exception as error:
-
-        print(
-            f"Could not read "
-            f"{item['title']}: {error}"
-        )
-
-        return item
-
-
-def enrich_trending(trending):
-
-    result = []
-
-    for index, item in enumerate(
-        trending,
+    for index, match in enumerate(
+        matches[:10],
         start=1
     ):
 
-        print(
-            f"Trending {index}/"
-            f"{len(trending)}: "
-            f"{item['title']}"
-        )
-
-        item = get_title_details(
-            item
-        )
-
-        result.append(item)
-
-        # Don't hammer the site
-        time.sleep(0.5)
-
-    return result
-
-
-# --------------------------------------------------
-# BUILD CATALOGUE
-# --------------------------------------------------
-
-def build_catalogue(
-    releases,
-    trending
-):
-
-    catalogue = {}
-
-    for slug, info in LANGUAGES.items():
-
-        language_name = info["name"]
-
-        language_releases = (
-            releases.get(
-                slug,
-                []
-            )
-        )
-
-        # New releases
-        new_movies = [
-            item
-            for item in language_releases
-            if item["type"] == "movie"
-        ]
-
-        new_series = [
-            item
-            for item in language_releases
-            if item["type"] == "series"
-        ]
-
-        # Trending for this language
-        language_trending = [
-            item
-            for item in trending
-            if item["language"]
-            == language_name
-        ]
-
-        trending_movies = [
-            item
-            for item in language_trending
-            if item["type"] == "movie"
-        ]
-
-        trending_series = [
-            item
-            for item in language_trending
-            if item["type"] == "series"
-        ]
-
-        catalogue[slug] = {
-
-            "language": language_name,
-
-            "new_releases":
-                language_releases,
-
-            "new_movies":
-                new_movies,
-
-            "new_series":
-                new_series,
-
-            "trending":
-                language_trending,
-
-            "trending_movies":
-                trending_movies,
-
-            "trending_series":
-                trending_series,
-        }
-
-    return catalogue
-
-
-# --------------------------------------------------
-# MAIN
-# --------------------------------------------------
-
-def main():
-
-    print()
-    print("=" * 60)
-    print("OTTweek India Catalogue Scraper")
-    print("=" * 60)
-
-    # 1. New releases
-    releases = get_new_releases()
-
-    # 2. Trending
-    trending = get_trending()
-
-    # 3. Get language/type of each trending title
-    trending = enrich_trending(
-        trending
-    )
-
-    # 4. Build final catalogue
-    catalogue = build_catalogue(
-        releases,
-        trending
-    )
-
-    # Save full catalogue
-    with open(
-        "catalogue.json",
-        "w",
-        encoding="utf-8"
-    ) as file:
-
-        json.dump(
-            catalogue,
-            file,
-            ensure_ascii=False,
-            indent=2
-        )
-
-    # Save trending separately for debugging
-    with open(
-        "trending.json",
-        "w",
-        encoding="utf-8"
-    ) as file:
-
-        json.dump(
-            trending,
-            file,
-            ensure_ascii=False,
-            indent=2
-        )
-
-    print()
-    print("=" * 60)
-    print("FINAL RESULT")
-    print("=" * 60)
-
-    for slug, data in catalogue.items():
+        parent = match.parent
 
         print()
         print(
-            f"{data['language']}"
+            f"--------------- MATCH {index} ---------------"
         )
 
         print(
-            f"  New Releases: "
-            f"{len(data['new_releases'])}"
+            "TAG:",
+            parent.name
         )
 
         print(
-            f"  New Movies: "
-            f"{len(data['new_movies'])}"
+            "CLASS:",
+            parent.get("class")
         )
 
         print(
-            f"  New Series: "
-            f"{len(data['new_series'])}"
+            "ID:",
+            parent.get("id")
         )
 
-        print(
-            f"  Trending: "
-            f"{len(data['trending'])}"
-        )
+        print()
+        print("TEXT:")
 
         print(
-            f"  Trending Movies: "
-            f"{len(data['trending_movies'])}"
+            clean(
+                parent.get_text(
+                    " ",
+                    strip=True
+                )
+            )[:1000]
         )
 
+        print()
+        print("HTML:")
+
         print(
-            f"  Trending Series: "
-            f"{len(data['trending_series'])}"
+            str(parent)[:4000]
         )
+
+        # Show nearby links
+        print()
+        print("NEARBY LINKS:")
+
+        links = parent.find_all(
+            "a",
+            href=True
+        )
+
+        for link in links[:20]:
+
+            print(
+                " -",
+                clean(
+                    link.get_text(
+                        " ",
+                        strip=True
+                    )
+                ),
+                "|",
+                link.get("href")
+            )
 
     print()
-    print(
-        "Saved catalogue.json"
-    )
+    print("=" * 60)
+    print("END TRENDING DEBUG")
+    print("=" * 60)
 
-    print(
-        "Saved trending.json"
-    )
+    # We intentionally return empty for now.
+    # Once we see the real HTML structure,
+    # we will replace this with the final parser.
+    return []
 
 
-if __name__ == "__main__":
-    main()
+# =========================================================
+# BUILD CATALOGUE
+# =========================================================
+
+def build
