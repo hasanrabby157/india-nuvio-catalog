@@ -32,6 +32,15 @@ LANGUAGES = {
 }
 
 
+LANGUAGE_CODES = {
+    "HI": "Hindi",
+    "TA": "Tamil",
+    "TE": "Telugu",
+    "ML": "Malayalam",
+    "BN": "Bengali",
+}
+
+
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Linux; Android 12; "
@@ -73,6 +82,25 @@ def get(url):
     return response.text
 
 
+def normalize_title(text):
+
+    text = clean(text)
+
+    text = text.lower()
+
+    text = text.replace(
+        "–",
+        "-"
+    )
+
+    text = text.replace(
+        "—",
+        "-"
+    )
+
+    return text
+
+
 # =========================================================
 # NEW RELEASES
 # =========================================================
@@ -104,10 +132,6 @@ def parse_new_releases(
 
         lower = text.lower()
 
-        # -------------------------------------------------
-        # Start of New Releases section
-        # -------------------------------------------------
-
         if (
             element.name == "h2"
             and "new" in lower
@@ -119,10 +143,6 @@ def parse_new_releases(
 
         if not inside:
             continue
-
-        # -------------------------------------------------
-        # End of section
-        # -------------------------------------------------
 
         stop_words = [
             "by platform",
@@ -146,10 +166,6 @@ def parse_new_releases(
 
         if not title:
             continue
-
-        # -------------------------------------------------
-        # Find card
-        # -------------------------------------------------
 
         card = element
 
@@ -180,10 +196,6 @@ def parse_new_releases(
             )
         )
 
-        # -------------------------------------------------
-        # Detect type
-        # -------------------------------------------------
-
         if re.search(
             r"\bSeries\b",
             card_text,
@@ -204,10 +216,6 @@ def parse_new_releases(
 
             continue
 
-        # -------------------------------------------------
-        # Detect release date
-        # -------------------------------------------------
-
         date_match = re.search(
             r"\b("
             r"Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec"
@@ -224,10 +232,6 @@ def parse_new_releases(
         else:
 
             release_date = None
-
-        # -------------------------------------------------
-        # Find title URL
-        # -------------------------------------------------
 
         title_url = None
 
@@ -253,10 +257,6 @@ def parse_new_releases(
 
                 break
 
-        # -------------------------------------------------
-        # Create item
-        # -------------------------------------------------
-
         item = {
             "title": title,
             "type": item_type,
@@ -265,17 +265,17 @@ def parse_new_releases(
             "url": title_url,
         }
 
-        # -------------------------------------------------
-        # Avoid duplicates
-        # -------------------------------------------------
-
         duplicate = False
 
         for old in items:
 
             if (
-                old["title"].lower()
-                == title.lower()
+                normalize_title(
+                    old["title"]
+                )
+                ==
+                normalize_title(title)
+
                 and old["type"]
                 == item_type
             ):
@@ -354,7 +354,7 @@ def get_new_releases():
 
 
 # =========================================================
-# TRENDING
+# TRENDING LINK EXTRACTION
 # =========================================================
 
 def extract_trending_links(html):
@@ -362,7 +362,7 @@ def extract_trending_links(html):
     links = []
 
     # -----------------------------------------------------
-    # Next.js serialized data
+    # Next.js serialized pathname data
     # -----------------------------------------------------
 
     patterns = [
@@ -433,27 +433,248 @@ def extract_trending_links(html):
 
                 links.append(href)
 
-    # Only Top 20
     return links[:20]
 
 
-def get_trending(releases):
+# =========================================================
+# TRENDING LANGUAGE FROM PAGE DATA
+# =========================================================
+
+def find_language_near_title(
+    html,
+    title,
+    slug
+):
+
+    # -----------------------------------------------------
+    # First: visible "In Hindi" style text
+    # -----------------------------------------------------
+
+    soup = BeautifulSoup(
+        html,
+        "html.parser"
+    )
+
+    text = clean(
+        soup.get_text(
+            " ",
+            strip=True
+        )
+    )
+
+    visible_patterns = [
+
+        r"\bIn\s+Hindi\b",
+        r"\bIn\s+Tamil\b",
+        r"\bIn\s+Telugu\b",
+        r"\bIn\s+Malayalam\b",
+        r"\bIn\s+Bengali\b",
+    ]
+
+    # This is only useful when the title is present
+    # in the same nearby text block.
+
+    title_normal = normalize_title(
+        title
+    )
+
+    for element in soup.find_all(
+        ["article", "div", "li", "section"]
+    ):
+
+        element_text = clean(
+            element.get_text(
+                " ",
+                strip=True
+            )
+        )
+
+        if not element_text:
+            continue
+
+        if title_normal not in normalize_title(
+            element_text
+        ):
+
+            continue
+
+        for pattern in visible_patterns:
+
+            match = re.search(
+                pattern,
+                element_text,
+                re.I
+            )
+
+            if match:
+
+                language = (
+                    match.group(0)
+                    .replace(
+                        "In ",
+                        ""
+                    )
+                    .strip()
+                )
+
+                return language
+
+    # -----------------------------------------------------
+    # Second: inspect serialized Next.js data
+    # -----------------------------------------------------
+
+    raw = html
+
+    candidates = [
+        title,
+        slug,
+        slug.replace(
+            "-",
+            " "
+        ),
+    ]
+
+    for candidate in candidates:
+
+        if not candidate:
+            continue
+
+        candidate_lower = candidate.lower()
+
+        start = 0
+
+        while True:
+
+            index = raw.lower().find(
+                candidate_lower,
+                start
+            )
+
+            if index == -1:
+                break
+
+            left = max(
+                0,
+                index - 3000
+            )
+
+            right = min(
+                len(raw),
+                index + 3000
+            )
+
+            nearby = raw[
+                left:right
+            ]
+
+            # -------------------------------------------------
+            # language: "HI"
+            # languageCode: "HI"
+            # original_language: "hi"
+            # originalLanguage: "hi"
+            # -------------------------------------------------
+
+            code_patterns = [
+
+                r'"language"\s*:\s*"([A-Za-z]{2})"',
+
+                r'\\"language\\"\s*:\s*\\"([A-Za-z]{2})\\"',
+
+                r'"languageCode"\s*:\s*"([A-Za-z]{2})"',
+
+                r'\\"languageCode\\"\s*:\s*\\"([A-Za-z]{2})\\"',
+
+                r'"original_language"\s*:\s*"([A-Za-z]{2})"',
+
+                r'\\"original_language\\"\s*:\s*\\"([A-Za-z]{2})\\"',
+
+                r'"originalLanguage"\s*:\s*"([A-Za-z]{2})"',
+
+                r'\\"originalLanguage\\"\s*:\s*\\"([A-Za-z]{2})\\"',
+            ]
+
+            for pattern in code_patterns:
+
+                matches = re.findall(
+                    pattern,
+                    nearby,
+                    re.I
+                )
+
+                for code in matches:
+
+                    code = code.upper()
+
+                    if code in LANGUAGE_CODES:
+
+                        return LANGUAGE_CODES[
+                            code
+                        ]
+
+            # -------------------------------------------------
+            # Language written as name
+            # -------------------------------------------------
+
+            name_patterns = [
+
+                r'"language"\s*:\s*"Hindi"',
+
+                r'\\"language\\"\s*:\s*\\"Hindi\\"',
+
+                r'"language"\s*:\s*"Tamil"',
+
+                r'\\"language\\"\s*:\s*\\"Tamil\\"',
+
+                r'"language"\s*:\s*"Telugu"',
+
+                r'\\"language\\"\s*:\s*\\"Telugu\\"',
+
+                r'"language"\s*:\s*"Malayalam"',
+
+                r'\\"language\\"\s*:\s*\\"Malayalam\\"',
+
+                r'"language"\s*:\s*"Bengali"',
+
+                r'\\"language\\"\s*:\s*\\"Bengali\\"',
+            ]
+
+            for pattern in name_patterns:
+
+                match = re.search(
+                    pattern,
+                    nearby,
+                    re.I
+                )
+
+                if match:
+
+                    return match.group(0).split(
+                        '"'
+                    )[-2]
+
+            start = index + len(
+                candidate
+            )
+
+    return None
+
+
+# =========================================================
+# TRENDING
+# =========================================================
+
+def get_trending(
+    homepage_html,
+    releases
+):
 
     print()
     print("=" * 60)
     print("FETCHING TRENDING")
     print("=" * 60)
 
-    # -----------------------------------------------------
-    # Fetch homepage only
-    # -----------------------------------------------------
-
-    html = get(
-        BASE_URL
-    )
-
     links = extract_trending_links(
-        html
+        homepage_html
     )
 
     print()
@@ -463,10 +684,7 @@ def get_trending(releases):
     )
 
     # -----------------------------------------------------
-    # Build release lookup
-    #
-    # We use the already downloaded language pages.
-    # No title-page requests.
+    # Release lookup
     # -----------------------------------------------------
 
     release_lookup = {}
@@ -494,10 +712,6 @@ def get_trending(releases):
 
     trending = []
 
-    # -----------------------------------------------------
-    # Process Trending Top 20
-    # -----------------------------------------------------
-
     for position, href in enumerate(
         links,
         start=1
@@ -507,10 +721,6 @@ def get_trending(releases):
             BASE_URL,
             href
         )
-
-        # -------------------------------------------------
-        # Detect type
-        # -------------------------------------------------
 
         if "/title/movie/" in href:
 
@@ -525,17 +735,40 @@ def get_trending(releases):
             continue
 
         # -------------------------------------------------
-        # Try exact URL match
+        # Extract slug
         # -------------------------------------------------
 
-        normalized = (
+        slug = (
+            href
+            .rstrip("/")
+            .split("/")[-1]
+        )
+
+        slug_without_id = re.sub(
+            r"^\d+-",
+            "",
+            slug
+        )
+
+        title_from_slug = clean(
+            slug_without_id.replace(
+                "-",
+                " "
+            )
+        )
+
+        # -------------------------------------------------
+        # First try current release lookup
+        # -------------------------------------------------
+
+        normalized_url = (
             url
             .rstrip("/")
             .lower()
         )
 
         matched = release_lookup.get(
-            normalized
+            normalized_url
         )
 
         if matched:
@@ -546,43 +779,32 @@ def get_trending(releases):
         else:
 
             # -------------------------------------------------
-            # Try title slug matching
+            # Try title matching
             # -------------------------------------------------
 
-            slug = (
-                href
-                .rstrip("/")
-                .split("/")[-1]
-            )
-
-            slug = re.sub(
-                r"^\d+-",
-                "",
-                slug
-            )
-
-            slug_title = clean(
-                slug.replace(
-                    "-",
-                    " "
-                )
-            ).lower()
-
             matched = None
+
+            target_title = normalize_title(
+                title_from_slug
+            )
 
             for language_items in releases.values():
 
                 for item in language_items:
 
-                    item_title = clean(
-                        item["title"]
-                    ).lower()
-
                     if (
                         item["type"]
-                        == item_type
-                        and item_title
-                        == slug_title
+                        != item_type
+                    ):
+
+                        continue
+
+                    if (
+                        normalize_title(
+                            item["title"]
+                        )
+                        ==
+                        target_title
                     ):
 
                         matched = item
@@ -598,15 +820,20 @@ def get_trending(releases):
 
             else:
 
+                title = title_from_slug
+
                 # -------------------------------------------------
-                # Unknown language
+                # Try serialized data from homepage
                 # -------------------------------------------------
 
-                title = slug_title.title()
-                language = None
+                language = find_language_near_title(
+                    homepage_html,
+                    title,
+                    slug_without_id
+                )
 
         # -------------------------------------------------
-        # Print result
+        # Print
         # -------------------------------------------------
 
         print()
@@ -629,29 +856,37 @@ def get_trending(releases):
                 + language
             )
 
-            trending.append({
+            # Only keep languages we want
+            if language in [
+                "Hindi",
+                "Tamil",
+                "Telugu",
+                "Malayalam",
+                "Bengali",
+            ]:
 
-                "title": title,
+                trending.append({
 
-                "type": item_type,
+                    "title": title,
 
-                "language": language,
+                    "type": item_type,
 
-                "url": url,
+                    "language": language,
 
-                "rank": position,
-            })
+                    "url": url,
+
+                    "rank": position,
+                })
 
         else:
 
             print(
-                "Language: UNKNOWN "
-                "(not in current releases)"
+                "Language: UNKNOWN"
             )
 
     print()
     print(
-        "Trending with known language: "
+        "Trending with known target language: "
         + str(len(trending))
     )
 
@@ -678,15 +913,7 @@ def build_catalogue(
             []
         )
 
-        # -------------------------------------------------
-        # New Movies
-        # -------------------------------------------------
-
         new_movies = []
-
-        # -------------------------------------------------
-        # New Series
-        # -------------------------------------------------
 
         new_series = []
 
@@ -704,10 +931,6 @@ def build_catalogue(
                     item
                 )
 
-        # -------------------------------------------------
-        # Language-specific Trending
-        # -------------------------------------------------
-
         language_trending = []
 
         for item in trending:
@@ -721,15 +944,7 @@ def build_catalogue(
                     item
                 )
 
-        # -------------------------------------------------
-        # Trending Movies
-        # -------------------------------------------------
-
         trending_movies = []
-
-        # -------------------------------------------------
-        # Trending Series
-        # -------------------------------------------------
 
         trending_series = []
 
@@ -746,10 +961,6 @@ def build_catalogue(
                 trending_series.append(
                     item
                 )
-
-        # -------------------------------------------------
-        # Final language section
-        # -------------------------------------------------
 
         catalogue[slug] = {
 
@@ -790,24 +1001,30 @@ def main():
     print("=" * 60)
 
     # -----------------------------------------------------
-    # Get New Releases
+    # Fetch homepage ONCE
+    # -----------------------------------------------------
+
+    homepage_html = get(
+        BASE_URL
+    )
+
+    # -----------------------------------------------------
+    # New releases
     # -----------------------------------------------------
 
     releases = get_new_releases()
 
     # -----------------------------------------------------
-    # Get Trending
-    # IMPORTANT:
-    # Pass releases so Trending does not need title-page
-    # requests.
+    # Trending
     # -----------------------------------------------------
 
     trending = get_trending(
+        homepage_html,
         releases
     )
 
     # -----------------------------------------------------
-    # Build Catalogue
+    # Build catalogue
     # -----------------------------------------------------
 
     catalogue = build_catalogue(
@@ -850,7 +1067,7 @@ def main():
         )
 
     # -----------------------------------------------------
-    # Final Result
+    # Final result
     # -----------------------------------------------------
 
     print()
@@ -935,10 +1152,6 @@ def main():
                 + item["language"]
             )
 
-
-# =========================================================
-# START
-# =========================================================
 
 if __name__ == "__main__":
 
