@@ -2,9 +2,10 @@ import json
 import re
 import requests
 from bs4 import BeautifulSoup
-from urllib.parse import urlencode
+from urllib.parse import urljoin
 
-BASE_URL = "https://ottweek.com/"
+
+BASE_URL = "https://ottweek.com"
 
 LANGUAGES = {
     "hindi": "Hindi",
@@ -16,234 +17,282 @@ LANGUAGES = {
 
 HEADERS = {
     "User-Agent": (
-        "Mozilla/5.0 (Linux; Android 12) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/140.0 Mobile Safari/537.36"
+        "Mozilla/5.0 (Linux; Android 12; "
+        "M2003J15SC) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/140.0 Mobile Safari/537.36"
     )
 }
 
 
-def clean_text(text):
+def clean(text):
     if not text:
-        return None
+        return ""
 
-    text = re.sub(r"\s+", " ", text).strip()
-
-    # Remove the unwanted Trending labels if they ever appear
-    text = re.sub(r"^All week\s+", "", text, flags=re.I)
-    text = re.sub(r"\s+Day\s+\d+$", "", text, flags=re.I)
-
-    return text.strip()
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def get_page(language):
-    params = {
-        "language": language
-    }
+    url = f"{BASE_URL}/language/{language}"
+
+    print(f"Fetching: {url}")
 
     response = requests.get(
-        BASE_URL,
-        params=params,
+        url,
         headers=HEADERS,
         timeout=30
     )
 
     response.raise_for_status()
 
-    return response.text
+    return response.text, response.url
 
 
-def parse_language_page(html, language):
+def find_release_section(soup):
+    """
+    Find the heading:
+    'X new <language> releases on OTT this week'
+
+    Everything before the Trending section belongs to
+    the actual release grid.
+    """
+
+    heading = None
+
+    for h2 in soup.find_all("h2"):
+        text = clean(h2.get_text(" ", strip=True)).lower()
+
+        if "new" in text and "releases on ott" in text:
+            heading = h2
+            break
+
+    if not heading:
+        return None
+
+    return heading
+
+
+def parse_releases(html, language):
     soup = BeautifulSoup(html, "html.parser")
+
+    release_heading = find_release_section(soup)
+
+    if not release_heading:
+        print("Could not find release section")
+        return []
 
     items = []
 
-    # Find the main release heading
-    release_heading = None
+    # Everything after the release heading is examined,
+    # but we STOP at "Trending now".
+    current = release_heading.find_next()
 
-    for heading in soup.find_all(["h1", "h2", "h3"]):
-        text = clean_text(heading.get_text(" ", strip=True))
+    while current:
 
-        if text and "new release" in text.lower():
-            release_heading = heading
+        # Stop before Trending now
+        if current.name in ["h2", "h3"]:
+            text = clean(current.get_text(" ", strip=True)).lower()
+
+            if "trending now" in text:
+                break
+
+        current = current.find_next()
+
+    # Easier and more reliable:
+    # use all headings (h3) between release heading and Trending.
+    in_release_section = False
+
+    for element in soup.find_all(["h2", "h3"]):
+
+        text = clean(element.get_text(" ", strip=True))
+
+        lower = text.lower()
+
+        if element == release_heading:
+            in_release_section = True
+            continue
+
+        if in_release_section and "trending now" in lower:
             break
 
-    # Main content area
-    main = soup.find("main")
+        if not in_release_section:
+            continue
 
-    if not main:
-        main = soup
+        # h3 titles are actual release titles
+        if element.name != "h3":
+            continue
 
-    # Look for links/cards that belong to actual OTT titles.
-    # Avoid the "Trending now" section.
-    seen = set()
-
-    for link in main.find_all("a", href=True):
-
-        title = clean_text(link.get_text(" ", strip=True))
+        title = text
 
         if not title:
             continue
 
-        href = link.get("href", "")
+        # Ignore navigation/metadata
+        ignored = {
+            "new ott releases by language",
+            "guides & original writing",
+        }
 
-        # Skip navigation/filter links
-        if (
-            href.startswith("#")
-            or "language=" in href
-            or "platform=" in href
-            or "genre=" in href
-            or "type=" in href
-        ):
+        if lower in ignored:
             continue
 
-        # Skip obvious navigation text
-        lower_title = title.lower()
+        # Find the nearest parent/card
+        card = element
 
-        if lower_title in {
-            "view trailer",
-            "show more",
-            "clear all",
-            "movies",
-            "web series",
-            "new releases",
-            "trending now",
-        }:
-            continue
-
-        # Skip the fake/trending entries
-        if lower_title.startswith("all week"):
-            continue
-
-        if "day " in lower_title and "week" in lower_title:
-            continue
-
-        # Need a reasonably title-like link
-        if len(title) < 2:
-            continue
-
-        # Don't duplicate
-        key = (title.lower(), href)
-
-        if key in seen:
-            continue
-
-        seen.add(key)
-
-        # Find surrounding card/container
-        card = link
-
-        for _ in range(5):
+        for _ in range(6):
             if card.parent:
                 card = card.parent
 
-                card_text = card.get_text(" ", strip=True)
+            card_text = clean(
+                card.get_text(" ", strip=True)
+            )
 
-                # Stop if this looks like an actual release card
-                if (
-                    "Movie" in card_text
-                    or "Series" in card_text
-                    or "In " + LANGUAGES[language] in card_text
-                ):
-                    break
+            # Actual cards normally contain Movie or Series
+            if re.search(
+                r"\b(Movie|Series)\b",
+                card_text,
+                re.IGNORECASE
+            ):
+                break
 
-        card_text = card.get_text(" ", strip=True)
+        card_text = clean(
+            card.get_text(" ", strip=True)
+        )
 
-        # Make sure this actually belongs to the requested language
-        if f"In {LANGUAGES[language]}" not in card_text:
-            continue
-
-        # Determine type
+        # Determine movie / series
         item_type = None
 
-        if re.search(r"\bMovie\b", card_text):
-            item_type = "movie"
-
-        elif re.search(r"\bSeries\b", card_text):
+        # Search the text immediately around the card
+        if re.search(r"\bSeries\b", card_text):
             item_type = "series"
+
+        elif re.search(r"\bMovie\b", card_text):
+            item_type = "movie"
 
         if not item_type:
             continue
 
-        # Find date
+        # Find release date
         date_match = re.search(
-            r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)"
-            r"\s+\d{1,2},\s+\d{4}",
-            card_text
+            r"\b("
+            r"Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec"
+            r")\s+\d{1,2}"
+            r"(?:,\s+\d{4})?",
+            card_text,
+            re.IGNORECASE
         )
 
-        release_date = date_match.group(0) if date_match else None
+        release_date = (
+            date_match.group(0)
+            if date_match
+            else None
+        )
 
-        items.append({
+        # Find title link
+        link = None
+
+        # Usually the title/card contains a link
+        for a in card.find_all("a", href=True):
+
+            href = a.get("href", "")
+
+            if href.startswith("/"):
+                full_url = urljoin(BASE_URL, href)
+
+                # Avoid filter/navigation links
+                if (
+                    "/language/" not in href
+                    and "platform" not in href
+                    and "genre" not in href
+                ):
+                    link = full_url
+                    break
+
+        item = {
             "title": title,
             "type": item_type,
             "language": LANGUAGES[language],
             "release_date": release_date,
-            "url": href
-        })
+            "url": link,
+        }
 
-    # Remove duplicates by title/type
-    unique = []
-    seen_titles = set()
+        # Prevent duplicates
+        duplicate = False
 
-    for item in items:
-        key = (
-            item["title"].lower(),
-            item["type"],
-            item["language"]
-        )
+        for old in items:
+            if (
+                old["title"].lower() == title.lower()
+                and old["type"] == item_type
+            ):
+                duplicate = True
+                break
 
-        if key in seen_titles:
-            continue
+        if not duplicate:
+            items.append(item)
 
-        seen_titles.add(key)
-        unique.append(item)
-
-    return unique
+    return items
 
 
 def main():
+
     catalogue = {}
 
     for slug, language_name in LANGUAGES.items():
 
-        print(f"\n========== {language_name} ==========")
+        print()
+        print("=" * 50)
+        print(language_name)
+        print("=" * 50)
 
         try:
-            html = get_page(slug)
 
-            items = parse_language_page(html, slug)
+            html, final_url = get_page(slug)
+
+            items = parse_releases(
+                html,
+                slug
+            )
 
             catalogue[slug] = items
 
-            print(f"Found {len(items)} items")
+            print(
+                f"{language_name}: "
+                f"{len(items)} titles"
+            )
 
             for item in items[:10]:
+
                 print(
                     f"{item['title']} | "
                     f"{item['type']} | "
                     f"{item['release_date']}"
                 )
 
-        except Exception as e:
-            print(f"ERROR for {language_name}: {e}")
+        except Exception as error:
+
+            print(
+                f"ERROR - {language_name}: "
+                f"{error}"
+            )
+
             catalogue[slug] = []
 
     with open(
         "catalogue-test.json",
         "w",
         encoding="utf-8"
-    ) as f:
+    ) as file:
+
         json.dump(
             catalogue,
-            f,
+            file,
             ensure_ascii=False,
             indent=2
         )
 
-    print("\n================================")
+    print()
+    print("=" * 50)
     print("Saved catalogue-test.json")
-    print("================================")
+    print("=" * 50)
 
 
 if __name__ == "__main__":
