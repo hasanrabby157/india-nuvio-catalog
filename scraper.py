@@ -32,15 +32,6 @@ LANGUAGES = {
 }
 
 
-CODE_TO_LANGUAGE = {
-    "HI": "Hindi",
-    "TA": "Tamil",
-    "TE": "Telugu",
-    "ML": "Malayalam",
-    "BN": "Bengali",
-}
-
-
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Linux; Android 12; "
@@ -59,13 +50,19 @@ session.headers.update(HEADERS)
 # =========================================================
 
 def clean(text):
+
     if not text:
         return ""
 
-    return re.sub(r"\s+", " ", text).strip()
+    return re.sub(
+        r"\s+",
+        " ",
+        text
+    ).strip()
 
 
 def get(url):
+
     response = session.get(
         url,
         timeout=30
@@ -80,7 +77,10 @@ def get(url):
 # NEW RELEASES
 # =========================================================
 
-def parse_new_releases(html, language):
+def parse_new_releases(
+    html,
+    language
+):
 
     soup = BeautifulSoup(
         html,
@@ -91,7 +91,9 @@ def parse_new_releases(html, language):
 
     inside = False
 
-    for element in soup.find_all(["h2", "h3"]):
+    for element in soup.find_all(
+        ["h2", "h3"]
+    ):
 
         text = clean(
             element.get_text(
@@ -102,16 +104,25 @@ def parse_new_releases(html, language):
 
         lower = text.lower()
 
+        # -------------------------------------------------
+        # Start of New Releases section
+        # -------------------------------------------------
+
         if (
             element.name == "h2"
             and "new" in lower
             and "releases on ott" in lower
         ):
+
             inside = True
             continue
 
         if not inside:
             continue
+
+        # -------------------------------------------------
+        # End of section
+        # -------------------------------------------------
 
         stop_words = [
             "by platform",
@@ -125,6 +136,7 @@ def parse_new_releases(html, language):
             word in lower
             for word in stop_words
         ):
+
             break
 
         if element.name != "h3":
@@ -134,6 +146,10 @@ def parse_new_releases(html, language):
 
         if not title:
             continue
+
+        # -------------------------------------------------
+        # Find card
+        # -------------------------------------------------
 
         card = element
 
@@ -154,6 +170,7 @@ def parse_new_releases(html, language):
                 card_text,
                 re.I
             ):
+
                 break
 
         card_text = clean(
@@ -163,11 +180,16 @@ def parse_new_releases(html, language):
             )
         )
 
+        # -------------------------------------------------
+        # Detect type
+        # -------------------------------------------------
+
         if re.search(
             r"\bSeries\b",
             card_text,
             re.I
         ):
+
             item_type = "series"
 
         elif re.search(
@@ -175,10 +197,16 @@ def parse_new_releases(html, language):
             card_text,
             re.I
         ):
+
             item_type = "movie"
 
         else:
+
             continue
+
+        # -------------------------------------------------
+        # Detect release date
+        # -------------------------------------------------
 
         date_match = re.search(
             r"\b("
@@ -190,9 +218,16 @@ def parse_new_releases(html, language):
         )
 
         if date_match:
+
             release_date = date_match.group(0)
+
         else:
+
             release_date = None
+
+        # -------------------------------------------------
+        # Find title URL
+        # -------------------------------------------------
 
         title_url = None
 
@@ -210,12 +245,17 @@ def parse_new_releases(html, language):
                 href.startswith("/")
                 and "/title/" in href
             ):
+
                 title_url = urljoin(
                     BASE_URL,
                     href
                 )
 
                 break
+
+        # -------------------------------------------------
+        # Create item
+        # -------------------------------------------------
 
         item = {
             "title": title,
@@ -224,6 +264,10 @@ def parse_new_releases(html, language):
             "release_date": release_date,
             "url": title_url,
         }
+
+        # -------------------------------------------------
+        # Avoid duplicates
+        # -------------------------------------------------
 
         duplicate = False
 
@@ -235,10 +279,12 @@ def parse_new_releases(html, language):
                 and old["type"]
                 == item_type
             ):
+
                 duplicate = True
                 break
 
         if not duplicate:
+
             items.append(item)
 
     return items
@@ -316,14 +362,19 @@ def extract_trending_links(html):
     links = []
 
     # -----------------------------------------------------
-    # Method 1:
-    # Look for Next.js pathname data
+    # Next.js serialized data
     # -----------------------------------------------------
 
     patterns = [
-        r'pathname\\?"\s*:\s*\\?"(/title/(?:movie|tv)/[^"\\]+)',
-        r'"pathname"\s*:\s*"(/title/(?:movie|tv)/[^"]+)',
-        r'pathname"\s*:\s*"(/title/(?:movie|tv)/[^"]+)',
+
+        r'pathname\\?"\s*:\s*\\?"'
+        r'(/title/(?:movie|tv)/[^"\\]+)',
+
+        r'"pathname"\s*:\s*'
+        r'"(/title/(?:movie|tv)/[^"]+)',
+
+        r'pathname"\s*:\s*'
+        r'"(/title/(?:movie|tv)/[^"]+)',
     ]
 
     for pattern in patterns:
@@ -351,7 +402,6 @@ def extract_trending_links(html):
                 links.append(href)
 
     # -----------------------------------------------------
-    # Method 2:
     # Normal HTML links
     # -----------------------------------------------------
 
@@ -380,177 +430,23 @@ def extract_trending_links(html):
         ):
 
             if href not in links:
+
                 links.append(href)
 
+    # Only Top 20
     return links[:20]
 
 
-def get_title_from_url(url):
-
-    last_part = url.rstrip(
-        "/"
-    ).split("/")[-1]
-
-    # Remove TMDB/OTTweek numeric ID
-    last_part = re.sub(
-        r"^\d+-",
-        "",
-        last_part
-    )
-
-    # Convert slug to title
-    title = last_part.replace(
-        "-",
-        " "
-    )
-
-    return title.strip()
-
-
-def detect_language_from_page(
-    html,
-    expected_type
-):
-
-    soup = BeautifulSoup(
-        html,
-        "html.parser"
-    )
-
-    text = clean(
-        soup.get_text(
-            " ",
-            strip=True
-        )
-    )
-
-    # -----------------------------------------------------
-    # Look for "Language HI"
-    # -----------------------------------------------------
-
-    patterns = [
-        r"\bLanguage\s*:?\s*([A-Z]{2})\b",
-        r'"language"\s*:\s*"([A-Z]{2})"',
-        r'"originalLanguage"\s*:\s*"([A-Z]{2})"',
-    ]
-
-    for pattern in patterns:
-
-        matches = re.findall(
-            pattern,
-            html,
-            re.I
-        )
-
-        for code in matches:
-
-            code = code.upper()
-
-            if code in CODE_TO_LANGUAGE:
-                return CODE_TO_LANGUAGE[code]
-
-    # Try visible page text
-    matches = re.findall(
-        r"\bLanguage\s*:?\s*([A-Za-z]{2})\b",
-        text,
-        re.I
-    )
-
-    for code in matches:
-
-        code = code.upper()
-
-        if code in CODE_TO_LANGUAGE:
-            return CODE_TO_LANGUAGE[code]
-
-    return None
-
-
-def parse_trending_item(
-    href,
-    position
-):
-
-    url = urljoin(
-        BASE_URL,
-        href
-    )
-
-    if "/title/movie/" in href:
-        item_type = "movie"
-
-    elif "/title/tv/" in href:
-        item_type = "series"
-
-    else:
-        return None
-
-    title = get_title_from_url(
-        href
-    )
-
-    print()
-    print(
-        "Trending "
-        + str(position)
-        + ": "
-        + title
-    )
-
-    print(
-        "Type: "
-        + item_type
-    )
-
-    try:
-
-        html = get(url)
-
-        language = detect_language_from_page(
-            html,
-            item_type
-        )
-
-        if language:
-
-            print(
-                "Language: "
-                + language
-            )
-
-        else:
-
-            print(
-                "Language: UNKNOWN"
-            )
-
-        if not language:
-            return None
-
-        return {
-            "title": title,
-            "type": item_type,
-            "language": language,
-            "url": url,
-            "rank": position,
-        }
-
-    except Exception as error:
-
-        print(
-            "ERROR loading title: "
-            + str(error)
-        )
-
-        return None
-
-
-def get_trending():
+def get_trending(releases):
 
     print()
     print("=" * 60)
     print("FETCHING TRENDING")
     print("=" * 60)
+
+    # -----------------------------------------------------
+    # Fetch homepage only
+    # -----------------------------------------------------
 
     html = get(
         BASE_URL
@@ -566,24 +462,196 @@ def get_trending():
         + str(len(links))
     )
 
+    # -----------------------------------------------------
+    # Build release lookup
+    #
+    # We use the already downloaded language pages.
+    # No title-page requests.
+    # -----------------------------------------------------
+
+    release_lookup = {}
+
+    for language_items in releases.values():
+
+        for item in language_items:
+
+            url = item.get(
+                "url"
+            )
+
+            if not url:
+                continue
+
+            normalized = (
+                url
+                .rstrip("/")
+                .lower()
+            )
+
+            release_lookup[
+                normalized
+            ] = item
+
     trending = []
+
+    # -----------------------------------------------------
+    # Process Trending Top 20
+    # -----------------------------------------------------
 
     for position, href in enumerate(
         links,
         start=1
     ):
 
-        item = parse_trending_item(
-            href,
-            position
+        url = urljoin(
+            BASE_URL,
+            href
         )
 
-        if item:
-            trending.append(item)
+        # -------------------------------------------------
+        # Detect type
+        # -------------------------------------------------
+
+        if "/title/movie/" in href:
+
+            item_type = "movie"
+
+        elif "/title/tv/" in href:
+
+            item_type = "series"
+
+        else:
+
+            continue
+
+        # -------------------------------------------------
+        # Try exact URL match
+        # -------------------------------------------------
+
+        normalized = (
+            url
+            .rstrip("/")
+            .lower()
+        )
+
+        matched = release_lookup.get(
+            normalized
+        )
+
+        if matched:
+
+            title = matched["title"]
+            language = matched["language"]
+
+        else:
+
+            # -------------------------------------------------
+            # Try title slug matching
+            # -------------------------------------------------
+
+            slug = (
+                href
+                .rstrip("/")
+                .split("/")[-1]
+            )
+
+            slug = re.sub(
+                r"^\d+-",
+                "",
+                slug
+            )
+
+            slug_title = clean(
+                slug.replace(
+                    "-",
+                    " "
+                )
+            ).lower()
+
+            matched = None
+
+            for language_items in releases.values():
+
+                for item in language_items:
+
+                    item_title = clean(
+                        item["title"]
+                    ).lower()
+
+                    if (
+                        item["type"]
+                        == item_type
+                        and item_title
+                        == slug_title
+                    ):
+
+                        matched = item
+                        break
+
+                if matched:
+                    break
+
+            if matched:
+
+                title = matched["title"]
+                language = matched["language"]
+
+            else:
+
+                # -------------------------------------------------
+                # Unknown language
+                # -------------------------------------------------
+
+                title = slug_title.title()
+                language = None
+
+        # -------------------------------------------------
+        # Print result
+        # -------------------------------------------------
+
+        print()
+        print(
+            "Trending "
+            + str(position)
+            + ": "
+            + title
+        )
+
+        print(
+            "Type: "
+            + item_type
+        )
+
+        if language:
+
+            print(
+                "Language: "
+                + language
+            )
+
+            trending.append({
+
+                "title": title,
+
+                "type": item_type,
+
+                "language": language,
+
+                "url": url,
+
+                "rank": position,
+            })
+
+        else:
+
+            print(
+                "Language: UNKNOWN "
+                "(not in current releases)"
+            )
 
     print()
     print(
-        "Successfully parsed trending: "
+        "Trending with known language: "
         + str(len(trending))
     )
 
@@ -610,16 +678,35 @@ def build_catalogue(
             []
         )
 
+        # -------------------------------------------------
+        # New Movies
+        # -------------------------------------------------
+
         new_movies = []
+
+        # -------------------------------------------------
+        # New Series
+        # -------------------------------------------------
+
         new_series = []
 
         for item in language_releases:
 
             if item["type"] == "movie":
-                new_movies.append(item)
+
+                new_movies.append(
+                    item
+                )
 
             elif item["type"] == "series":
-                new_series.append(item)
+
+                new_series.append(
+                    item
+                )
+
+        # -------------------------------------------------
+        # Language-specific Trending
+        # -------------------------------------------------
 
         language_trending = []
 
@@ -629,27 +716,45 @@ def build_catalogue(
                 item.get("language")
                 == language_name
             ):
+
                 language_trending.append(
                     item
                 )
 
+        # -------------------------------------------------
+        # Trending Movies
+        # -------------------------------------------------
+
         trending_movies = []
+
+        # -------------------------------------------------
+        # Trending Series
+        # -------------------------------------------------
+
         trending_series = []
 
         for item in language_trending:
 
             if item.get("type") == "movie":
+
                 trending_movies.append(
                     item
                 )
 
             elif item.get("type") == "series":
+
                 trending_series.append(
                     item
                 )
 
+        # -------------------------------------------------
+        # Final language section
+        # -------------------------------------------------
+
         catalogue[slug] = {
-            "language": language_name,
+
+            "language":
+                language_name,
 
             "new_releases":
                 language_releases,
@@ -684,19 +789,36 @@ def main():
     print("OTTweek India Catalogue Scraper")
     print("=" * 60)
 
-    # Get new releases
+    # -----------------------------------------------------
+    # Get New Releases
+    # -----------------------------------------------------
+
     releases = get_new_releases()
 
-    # Get trending
-    trending = get_trending()
+    # -----------------------------------------------------
+    # Get Trending
+    # IMPORTANT:
+    # Pass releases so Trending does not need title-page
+    # requests.
+    # -----------------------------------------------------
 
-    # Build catalogue
+    trending = get_trending(
+        releases
+    )
+
+    # -----------------------------------------------------
+    # Build Catalogue
+    # -----------------------------------------------------
+
     catalogue = build_catalogue(
         releases,
         trending
     )
 
-    # Save catalogue
+    # -----------------------------------------------------
+    # Save catalogue.json
+    # -----------------------------------------------------
+
     with open(
         "catalogue.json",
         "w",
@@ -710,7 +832,10 @@ def main():
             indent=2
         )
 
-    # Save trending
+    # -----------------------------------------------------
+    # Save trending.json
+    # -----------------------------------------------------
+
     with open(
         "trending.json",
         "w",
@@ -724,7 +849,10 @@ def main():
             indent=2
         )
 
-    # Final result
+    # -----------------------------------------------------
+    # Final Result
+    # -----------------------------------------------------
+
     print()
     print("=" * 60)
     print("FINAL RESULT")
@@ -792,7 +920,9 @@ def main():
         )
 
         print()
-        print("Trending titles:")
+        print(
+            "Trending titles:"
+        )
 
         for item in data["trending"]:
 
@@ -806,5 +936,10 @@ def main():
             )
 
 
+# =========================================================
+# START
+# =========================================================
+
 if __name__ == "__main__":
+
     main()
