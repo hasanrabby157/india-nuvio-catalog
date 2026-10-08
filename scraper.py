@@ -70,13 +70,9 @@ def parse_new_releases(html, language):
 
     for element in soup.find_all(["h2", "h3"]):
 
-        text = clean(
-            element.get_text(" ", strip=True)
-        )
-
+        text = clean(element.get_text(" ", strip=True))
         lower = text.lower()
 
-        # Start of actual release section
         if (
             element.name == "h2"
             and "new" in lower
@@ -88,7 +84,6 @@ def parse_new_releases(html, language):
         if not inside:
             continue
 
-        # Stop at the next major section
         stop_words = [
             "by platform",
             "more languages",
@@ -108,7 +103,6 @@ def parse_new_releases(html, language):
         if not title:
             continue
 
-        # Find release card
         card = element
 
         for _ in range(6):
@@ -131,7 +125,6 @@ def parse_new_releases(html, language):
             card.get_text(" ", strip=True)
         )
 
-        # Determine type
         if re.search(r"\bSeries\b", card_text, re.I):
             item_type = "series"
 
@@ -141,7 +134,6 @@ def parse_new_releases(html, language):
         else:
             continue
 
-        # Find release date
         date_match = re.search(
             r"\b("
             r"Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec"
@@ -156,7 +148,6 @@ def parse_new_releases(html, language):
         else:
             release_date = None
 
-        # Find title URL
         title_url = None
 
         for link in card.find_all("a", href=True):
@@ -167,10 +158,7 @@ def parse_new_releases(html, language):
                 href.startswith("/")
                 and "/title/" in href
             ):
-                title_url = urljoin(
-                    BASE_URL,
-                    href
-                )
+                title_url = urljoin(BASE_URL, href)
                 break
 
         item = {
@@ -181,7 +169,6 @@ def parse_new_releases(html, language):
             "url": title_url,
         }
 
-        # Remove duplicates
         duplicate = False
 
         for old in items:
@@ -206,11 +193,9 @@ def get_new_releases():
     for slug, info in LANGUAGES.items():
 
         print()
-        print(
-            f"Fetching {info['name']} releases..."
-        )
+        print("Fetching " + info["name"] + " releases...")
 
-        url = f"{BASE_URL}/language/{slug}"
+        url = BASE_URL + "/language/" + slug
 
         try:
 
@@ -224,23 +209,29 @@ def get_new_releases():
             result[slug] = items
 
             print(
-                f"{info['name']}: "
-                f"{len(items)} releases"
+                info["name"]
+                + ": "
+                + str(len(items))
+                + " releases"
             )
 
             for item in items[:10]:
 
                 print(
-                    f"{item['title']} | "
-                    f"{item['type']} | "
-                    f"{item['release_date']}"
+                    item["title"]
+                    + " | "
+                    + item["type"]
+                    + " | "
+                    + str(item["release_date"])
                 )
 
         except Exception as error:
 
             print(
-                f"ERROR {info['name']}: "
-                f"{error}"
+                "ERROR "
+                + info["name"]
+                + ": "
+                + str(error)
             )
 
             result[slug] = []
@@ -275,4 +266,242 @@ def get_trending():
 
     print()
     print(
-        f"
+        "Found "
+        + str(len(matches))
+        + " trending text matches"
+    )
+
+    for index, match in enumerate(
+        matches[:10],
+        start=1
+    ):
+
+        parent = match.parent
+
+        print()
+        print(
+            "--------------- MATCH "
+            + str(index)
+            + " ---------------"
+        )
+
+        print(
+            "TAG: "
+            + str(parent.name)
+        )
+
+        print(
+            "CLASS: "
+            + str(parent.get("class"))
+        )
+
+        print(
+            "ID: "
+            + str(parent.get("id"))
+        )
+
+        print()
+        print("TEXT:")
+
+        print(
+            clean(
+                parent.get_text(
+                    " ",
+                    strip=True
+                )
+            )[:1500]
+        )
+
+        print()
+        print("HTML:")
+
+        print(
+            str(parent)[:4000]
+        )
+
+        print()
+        print("LINKS:")
+
+        links = parent.find_all(
+            "a",
+            href=True
+        )
+
+        if not links:
+
+            print("No links found")
+
+        else:
+
+            for link in links[:20]:
+
+                link_text = clean(
+                    link.get_text(
+                        " ",
+                        strip=True
+                    )
+                )
+
+                print(
+                    "- "
+                    + link_text
+                    + " | "
+                    + str(link.get("href"))
+                )
+
+    print()
+    print("=" * 60)
+    print("END TRENDING DEBUG")
+    print("=" * 60)
+
+    return []
+
+
+# =========================================================
+# BUILD CATALOGUE
+# =========================================================
+
+def build_catalogue(releases, trending):
+
+    catalogue = {}
+
+    for slug, info in LANGUAGES.items():
+
+        language_name = info["name"]
+
+        language_releases = releases.get(
+            slug,
+            []
+        )
+
+        new_movies = []
+        new_series = []
+
+        for item in language_releases:
+
+            if item["type"] == "movie":
+                new_movies.append(item)
+
+            elif item["type"] == "series":
+                new_series.append(item)
+
+        language_trending = []
+
+        for item in trending:
+
+            if item.get("language") == language_name:
+                language_trending.append(item)
+
+        trending_movies = []
+        trending_series = []
+
+        for item in language_trending:
+
+            if item.get("type") == "movie":
+                trending_movies.append(item)
+
+            elif item.get("type") == "series":
+                trending_series.append(item)
+
+        catalogue[slug] = {
+            "language": language_name,
+            "new_releases": language_releases,
+            "new_movies": new_movies,
+            "new_series": new_series,
+            "trending": language_trending,
+            "trending_movies": trending_movies,
+            "trending_series": trending_series,
+        }
+
+    return catalogue
+
+
+# =========================================================
+# MAIN
+# =========================================================
+
+def main():
+
+    print()
+    print("=" * 60)
+    print("OTTweek India Catalogue Scraper")
+    print("=" * 60)
+
+    releases = get_new_releases()
+
+    trending = get_trending()
+
+    catalogue = build_catalogue(
+        releases,
+        trending
+    )
+
+    with open(
+        "catalogue.json",
+        "w",
+        encoding="utf-8"
+    ) as file:
+
+        json.dump(
+            catalogue,
+            file,
+            ensure_ascii=False,
+            indent=2
+        )
+
+    with open(
+        "trending.json",
+        "w",
+        encoding="utf-8"
+    ) as file:
+
+        json.dump(
+            trending,
+            file,
+            ensure_ascii=False,
+            indent=2
+        )
+
+    print()
+    print("=" * 60)
+    print("FINAL RESULT")
+    print("=" * 60)
+
+    for slug, data in catalogue.items():
+
+        print()
+        print(data["language"].upper())
+
+        print(
+            "New Releases: "
+            + str(len(data["new_releases"]))
+        )
+
+        print(
+            "New Movies: "
+            + str(len(data["new_movies"]))
+        )
+
+        print(
+            "New Series: "
+            + str(len(data["new_series"]))
+        )
+
+        print(
+            "Trending: "
+            + str(len(data["trending"]))
+        )
+
+        print(
+            "Trending Movies: "
+            + str(len(data["trending_movies"]))
+        )
+
+        print(
+            "Trending Series: "
+            + str(len(data["trending_series"]))
+        )
+
+
+if __name__ == "__main__":
+    main()
