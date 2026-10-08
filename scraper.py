@@ -1,6 +1,5 @@
 import json
 import re
-import time
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
@@ -49,7 +48,11 @@ def clean(text):
     if not text:
         return ""
 
-    return re.sub(r"\s+", " ", text).strip()
+    return re.sub(
+        r"\s+",
+        " ",
+        text
+    ).strip()
 
 
 def get(url):
@@ -67,22 +70,34 @@ def get(url):
 # NEW RELEASES
 # =========================================================
 
-def parse_new_releases(html, language):
+def parse_new_releases(
+    html,
+    language
+):
 
-    soup = BeautifulSoup(html, "html.parser")
+    soup = BeautifulSoup(
+        html,
+        "html.parser"
+    )
 
     items = []
+
     inside = False
 
-    for element in soup.find_all(["h2", "h3"]):
+    for element in soup.find_all(
+        ["h2", "h3"]
+    ):
 
         text = clean(
-            element.get_text(" ", strip=True)
+            element.get_text(
+                " ",
+                strip=True
+            )
         )
 
         lower = text.lower()
 
-        # Start actual release section
+        # Start of actual release section
         if (
             element.name == "h2"
             and "new" in lower
@@ -94,7 +109,7 @@ def parse_new_releases(html, language):
         if not inside:
             continue
 
-        # Stop when release section ends
+        # Stop at the next major section
         stop_words = [
             "by platform",
             "more languages",
@@ -117,7 +132,7 @@ def parse_new_releases(html, language):
         if not title:
             continue
 
-        # Find card
+        # Find the release card
         card = element
 
         for _ in range(6):
@@ -126,7 +141,10 @@ def parse_new_releases(html, language):
                 card = card.parent
 
             card_text = clean(
-                card.get_text(" ", strip=True)
+                card.get_text(
+                    " ",
+                    strip=True
+                )
             )
 
             if re.search(
@@ -137,10 +155,13 @@ def parse_new_releases(html, language):
                 break
 
         card_text = clean(
-            card.get_text(" ", strip=True)
+            card.get_text(
+                " ",
+                strip=True
+            )
         )
 
-        # Type
+        # Determine type
         if re.search(
             r"\bSeries\b",
             card_text,
@@ -158,7 +179,7 @@ def parse_new_releases(html, language):
         else:
             continue
 
-        # Date
+        # Find release date
         date_match = re.search(
             r"\b("
             r"Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec"
@@ -168,13 +189,12 @@ def parse_new_releases(html, language):
             re.I
         )
 
-        release_date = (
-            date_match.group(0)
-            if date_match
-            else None
-        )
+        if date_match:
+            release_date = date_match.group(0)
+        else:
+            release_date = None
 
-        # URL
+        # Find title URL
         title_url = None
 
         for link in card.find_all(
@@ -182,200 +202,11 @@ def parse_new_releases(html, language):
             href=True
         ):
 
-            href = link["href"]
+            href = link.get("href", "")
 
-            if not href.startswith("/"):
-                continue
+            if (
+                href.startswith("/")
+                and "/title/" in href
+            ):
 
-            if "/title/" in href:
-
-                title_url = urljoin(
-                    BASE_URL,
-                    href
-                )
-
-                break
-
-        item = {
-            "title": title,
-            "type": item_type,
-            "language": language,
-            "release_date": release_date,
-            "url": title_url,
-        }
-
-        # Remove duplicates
-        duplicate = any(
-            old["title"].lower()
-            == title.lower()
-            and old["type"]
-            == item_type
-            for old in items
-        )
-
-        if not duplicate:
-            items.append(item)
-
-    return items
-
-
-def get_new_releases():
-
-    result = {}
-
-    for slug, info in LANGUAGES.items():
-
-        print()
-        print(
-            f"Fetching {info['name']} releases..."
-        )
-
-        url = (
-            f"{BASE_URL}/language/{slug}"
-        )
-
-        try:
-
-            html = get(url)
-
-            items = parse_new_releases(
-                html,
-                info["name"]
-            )
-
-            result[slug] = items
-
-            print(
-                f"{info['name']}: "
-                f"{len(items)} releases"
-            )
-
-        except Exception as error:
-
-            print(
-                f"ERROR {info['name']}: "
-                f"{error}"
-            )
-
-            result[slug] = []
-
-    return result
-
-
-# =========================================================
-# TRENDING DEBUG
-# =========================================================
-
-def get_trending():
-
-    print()
-    print("=" * 60)
-    print("FETCHING TRENDING DEBUG")
-    print("=" * 60)
-
-    html = get(BASE_URL)
-
-    soup = BeautifulSoup(
-        html,
-        "html.parser"
-    )
-
-    # Find every text node containing "Trending now"
-    matches = soup.find_all(
-        string=re.compile(
-            r"trending now",
-            re.I
-        )
-    )
-
-    print()
-    print(
-        f"Found {len(matches)} "
-        f"'Trending now' text matches"
-    )
-
-    for index, match in enumerate(
-        matches[:10],
-        start=1
-    ):
-
-        parent = match.parent
-
-        print()
-        print(
-            f"--------------- MATCH {index} ---------------"
-        )
-
-        print(
-            "TAG:",
-            parent.name
-        )
-
-        print(
-            "CLASS:",
-            parent.get("class")
-        )
-
-        print(
-            "ID:",
-            parent.get("id")
-        )
-
-        print()
-        print("TEXT:")
-
-        print(
-            clean(
-                parent.get_text(
-                    " ",
-                    strip=True
-                )
-            )[:1000]
-        )
-
-        print()
-        print("HTML:")
-
-        print(
-            str(parent)[:4000]
-        )
-
-        # Show nearby links
-        print()
-        print("NEARBY LINKS:")
-
-        links = parent.find_all(
-            "a",
-            href=True
-        )
-
-        for link in links[:20]:
-
-            print(
-                " -",
-                clean(
-                    link.get_text(
-                        " ",
-                        strip=True
-                    )
-                ),
-                "|",
-                link.get("href")
-            )
-
-    print()
-    print("=" * 60)
-    print("END TRENDING DEBUG")
-    print("=" * 60)
-
-    # We intentionally return empty for now.
-    # Once we see the real HTML structure,
-    # we will replace this with the final parser.
-    return []
-
-
-# =========================================================
-# BUILD CATALOGUE
-# =========================================================
-
-def build
+                title_url =
