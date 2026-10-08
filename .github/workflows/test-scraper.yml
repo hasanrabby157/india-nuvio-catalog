@@ -1,0 +1,54 @@
+name: Test OTTweek Scraper
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install requests beautifulsoup4
+
+      - name: Run scraper
+        run: |
+          python scraper.py
+
+      - name: Show catalogue
+        run: |
+          python - <<'PY'
+          import json
+
+          with open("catalogue-test.json", encoding="utf-8") as f:
+              data = json.load(f)
+
+          for language, items in data.items():
+              print()
+              print("=" * 40)
+              print(language, "-", len(items), "titles")
+
+              for item in items[:10]:
+                  print(
+                      item["title"],
+                      "|",
+                      item["type"],
+                      "|",
+                      item["release_date"]
+                  )
+          PY
+
+      - name: Upload test catalogue
+        uses: actions/upload-artifact@v4
+        with:
+          name: ottweek-catalogue-test
+          path: catalogue-test.json
