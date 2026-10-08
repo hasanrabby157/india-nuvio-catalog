@@ -44,80 +44,47 @@ def get_page(language):
 
     response.raise_for_status()
 
-    return response.text, response.url
-
-
-def find_release_section(soup):
-    """
-    Find the heading:
-    'X new <language> releases on OTT this week'
-
-    Everything before the Trending section belongs to
-    the actual release grid.
-    """
-
-    heading = None
-
-    for h2 in soup.find_all("h2"):
-        text = clean(h2.get_text(" ", strip=True)).lower()
-
-        if "new" in text and "releases on ott" in text:
-            heading = h2
-            break
-
-    if not heading:
-        return None
-
-    return heading
+    return response.text
 
 
 def parse_releases(html, language):
     soup = BeautifulSoup(html, "html.parser")
 
-    release_heading = find_release_section(soup)
-
-    if not release_heading:
-        print("Could not find release section")
-        return []
-
     items = []
+    inside_release_section = False
 
-    # Everything after the release heading is examined,
-    # but we STOP at "Trending now".
-    current = release_heading.find_next()
-
-    while current:
-
-        # Stop before Trending now
-        if current.name in ["h2", "h3"]:
-            text = clean(current.get_text(" ", strip=True)).lower()
-
-            if "trending now" in text:
-                break
-
-        current = current.find_next()
-
-    # Easier and more reliable:
-    # use all headings (h3) between release heading and Trending.
-    in_release_section = False
-
+    # Find the heading for the current-week release section
     for element in soup.find_all(["h2", "h3"]):
 
         text = clean(element.get_text(" ", strip=True))
-
         lower = text.lower()
 
-        if element == release_heading:
-            in_release_section = True
+        # Start of actual release section
+        if (
+            element.name == "h2"
+            and "new" in lower
+            and "releases on ott" in lower
+        ):
+            inside_release_section = True
             continue
 
-        if in_release_section and "trending now" in lower:
+        if not inside_release_section:
+            continue
+
+        # IMPORTANT:
+        # Stop as soon as the actual release grid ends.
+        stop_words = [
+            "by platform",
+            "more languages",
+            "trending",
+            "what's new",
+            "guides & original writing",
+        ]
+
+        if any(word in lower for word in stop_words):
             break
 
-        if not in_release_section:
-            continue
-
-        # h3 titles are actual release titles
+        # Only h3 elements inside this section are titles
         if element.name != "h3":
             continue
 
@@ -126,16 +93,7 @@ def parse_releases(html, language):
         if not title:
             continue
 
-        # Ignore navigation/metadata
-        ignored = {
-            "new ott releases by language",
-            "guides & original writing",
-        }
-
-        if lower in ignored:
-            continue
-
-        # Find the nearest parent/card
+        # Find the card containing this title
         card = element
 
         for _ in range(6):
@@ -146,7 +104,6 @@ def parse_releases(html, language):
                 card.get_text(" ", strip=True)
             )
 
-            # Actual cards normally contain Movie or Series
             if re.search(
                 r"\b(Movie|Series)\b",
                 card_text,
@@ -158,10 +115,9 @@ def parse_releases(html, language):
             card.get_text(" ", strip=True)
         )
 
-        # Determine movie / series
+        # Determine type
         item_type = None
 
-        # Search the text immediately around the card
         if re.search(r"\bSeries\b", card_text):
             item_type = "series"
 
@@ -187,44 +143,50 @@ def parse_releases(html, language):
             else None
         )
 
-        # Find title link
-        link = None
+        # Find actual title URL
+        title_url = None
 
-        # Usually the title/card contains a link
-        for a in card.find_all("a", href=True):
+        for link in card.find_all("a", href=True):
 
-            href = a.get("href", "")
+            href = link.get("href", "")
 
-            if href.startswith("/"):
-                full_url = urljoin(BASE_URL, href)
+            if not href.startswith("/"):
+                continue
 
-                # Avoid filter/navigation links
-                if (
-                    "/language/" not in href
-                    and "platform" not in href
-                    and "genre" not in href
-                ):
-                    link = full_url
-                    break
+            # Don't use navigation/filter links
+            if any(
+                x in href.lower()
+                for x in [
+                    "/language/",
+                    "/platform/",
+                    "/genre/",
+                    "/type/",
+                    "/week/",
+                ]
+            ):
+                continue
+
+            title_url = urljoin(
+                BASE_URL,
+                href
+            )
+
+            break
 
         item = {
             "title": title,
             "type": item_type,
             "language": LANGUAGES[language],
             "release_date": release_date,
-            "url": link,
+            "url": title_url,
         }
 
         # Prevent duplicates
-        duplicate = False
-
-        for old in items:
-            if (
-                old["title"].lower() == title.lower()
-                and old["type"] == item_type
-            ):
-                duplicate = True
-                break
+        duplicate = any(
+            old["title"].lower() == title.lower()
+            and old["type"] == item_type
+            for old in items
+        )
 
         if not duplicate:
             items.append(item)
@@ -245,7 +207,7 @@ def main():
 
         try:
 
-            html, final_url = get_page(slug)
+            html = get_page(slug)
 
             items = parse_releases(
                 html,
@@ -255,12 +217,11 @@ def main():
             catalogue[slug] = items
 
             print(
-                f"{language_name}: "
+                f"{slug} - "
                 f"{len(items)} titles"
             )
 
-            for item in items[:10]:
-
+            for item in items:
                 print(
                     f"{item['title']} | "
                     f"{item['type']} | "
@@ -270,8 +231,7 @@ def main():
         except Exception as error:
 
             print(
-                f"ERROR - {language_name}: "
-                f"{error}"
+                f"ERROR - {language_name}: {error}"
             )
 
             catalogue[slug] = []
