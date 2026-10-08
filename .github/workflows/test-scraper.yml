@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  test:
+  scrape:
     runs-on: ubuntu-latest
 
     steps:
@@ -14,7 +14,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: "3.12"
 
       - name: Install dependencies
         run: |
@@ -29,26 +29,37 @@ jobs:
           python - <<'PY'
           import json
 
-          with open("catalogue-test.json", encoding="utf-8") as f:
+          with open("catalogue.json", encoding="utf-8") as f:
               data = json.load(f)
 
-          for language, items in data.items():
+          for language, info in data.items():
               print()
               print("=" * 40)
-              print(language, "-", len(items), "titles")
+              print(language.upper())
+              print("=" * 40)
 
-              for item in items[:10]:
+              print("New Releases:", len(info["new_releases"]))
+              print("New Movies:", len(info["new_movies"]))
+              print("New Series:", len(info["new_series"]))
+              print("Trending:", len(info["trending"]))
+              print("Trending Movies:", len(info["trending_movies"]))
+              print("Trending Series:", len(info["trending_series"]))
+
+              print()
+              print("Trending titles:")
+
+              for item in info["trending"]:
                   print(
-                      item["title"],
-                      "|",
-                      item["type"],
-                      "|",
-                      item["release_date"]
+                      f"- {item['title']} | "
+                      f"{item['type']} | "
+                      f"{item['language']}"
                   )
           PY
 
-      - name: Upload test catalogue
+      - name: Upload catalogue
         uses: actions/upload-artifact@v4
         with:
-          name: ottweek-catalogue-test
-          path: catalogue-test.json
+          name: ottweek-catalogue
+          path: |
+            catalogue.json
+            trending.json
