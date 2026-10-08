@@ -48,21 +48,12 @@ def clean(text):
     if not text:
         return ""
 
-    return re.sub(
-        r"\s+",
-        " ",
-        text
-    ).strip()
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def get(url):
-    response = session.get(
-        url,
-        timeout=30
-    )
-
+    response = session.get(url, timeout=30)
     response.raise_for_status()
-
     return response.text
 
 
@@ -70,29 +61,17 @@ def get(url):
 # NEW RELEASES
 # =========================================================
 
-def parse_new_releases(
-    html,
-    language
-):
+def parse_new_releases(html, language):
 
-    soup = BeautifulSoup(
-        html,
-        "html.parser"
-    )
+    soup = BeautifulSoup(html, "html.parser")
 
     items = []
-
     inside = False
 
-    for element in soup.find_all(
-        ["h2", "h3"]
-    ):
+    for element in soup.find_all(["h2", "h3"]):
 
         text = clean(
-            element.get_text(
-                " ",
-                strip=True
-            )
+            element.get_text(" ", strip=True)
         )
 
         lower = text.lower()
@@ -118,10 +97,7 @@ def parse_new_releases(
             "guides & original writing",
         ]
 
-        if any(
-            word in lower
-            for word in stop_words
-        ):
+        if any(word in lower for word in stop_words):
             break
 
         if element.name != "h3":
@@ -132,7 +108,7 @@ def parse_new_releases(
         if not title:
             continue
 
-        # Find the release card
+        # Find release card
         card = element
 
         for _ in range(6):
@@ -141,10 +117,7 @@ def parse_new_releases(
                 card = card.parent
 
             card_text = clean(
-                card.get_text(
-                    " ",
-                    strip=True
-                )
+                card.get_text(" ", strip=True)
             )
 
             if re.search(
@@ -155,25 +128,14 @@ def parse_new_releases(
                 break
 
         card_text = clean(
-            card.get_text(
-                " ",
-                strip=True
-            )
+            card.get_text(" ", strip=True)
         )
 
         # Determine type
-        if re.search(
-            r"\bSeries\b",
-            card_text,
-            re.I
-        ):
+        if re.search(r"\bSeries\b", card_text, re.I):
             item_type = "series"
 
-        elif re.search(
-            r"\bMovie\b",
-            card_text,
-            re.I
-        ):
+        elif re.search(r"\bMovie\b", card_text, re.I):
             item_type = "movie"
 
         else:
@@ -197,10 +159,7 @@ def parse_new_releases(
         # Find title URL
         title_url = None
 
-        for link in card.find_all(
-            "a",
-            href=True
-        ):
+        for link in card.find_all("a", href=True):
 
             href = link.get("href", "")
 
@@ -208,5 +167,112 @@ def parse_new_releases(
                 href.startswith("/")
                 and "/title/" in href
             ):
+                title_url = urljoin(
+                    BASE_URL,
+                    href
+                )
+                break
 
-                title_url =
+        item = {
+            "title": title,
+            "type": item_type,
+            "language": language,
+            "release_date": release_date,
+            "url": title_url,
+        }
+
+        # Remove duplicates
+        duplicate = False
+
+        for old in items:
+
+            if (
+                old["title"].lower() == title.lower()
+                and old["type"] == item_type
+            ):
+                duplicate = True
+                break
+
+        if not duplicate:
+            items.append(item)
+
+    return items
+
+
+def get_new_releases():
+
+    result = {}
+
+    for slug, info in LANGUAGES.items():
+
+        print()
+        print(
+            f"Fetching {info['name']} releases..."
+        )
+
+        url = f"{BASE_URL}/language/{slug}"
+
+        try:
+
+            html = get(url)
+
+            items = parse_new_releases(
+                html,
+                info["name"]
+            )
+
+            result[slug] = items
+
+            print(
+                f"{info['name']}: "
+                f"{len(items)} releases"
+            )
+
+            for item in items[:10]:
+
+                print(
+                    f"{item['title']} | "
+                    f"{item['type']} | "
+                    f"{item['release_date']}"
+                )
+
+        except Exception as error:
+
+            print(
+                f"ERROR {info['name']}: "
+                f"{error}"
+            )
+
+            result[slug] = []
+
+    return result
+
+
+# =========================================================
+# TRENDING DEBUG
+# =========================================================
+
+def get_trending():
+
+    print()
+    print("=" * 60)
+    print("FETCHING TRENDING DEBUG")
+    print("=" * 60)
+
+    html = get(BASE_URL)
+
+    soup = BeautifulSoup(
+        html,
+        "html.parser"
+    )
+
+    matches = soup.find_all(
+        string=re.compile(
+            r"trending",
+            re.I
+        )
+    )
+
+    print()
+    print(
+        f"
